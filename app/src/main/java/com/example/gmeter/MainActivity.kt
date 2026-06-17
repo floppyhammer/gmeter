@@ -44,23 +44,26 @@ class MainActivity : ComponentActivity() {
         enableEdgeToEdge()
         setContent {
             GMeterTheme {
-                Scaffold(modifier = Modifier.fillMaxSize()) { innerPadding ->
-                    GForceApp(modifier = Modifier.padding(innerPadding))
-                }
+                GForceApp()
             }
         }
     }
 }
 
+@OptIn(ExperimentalMaterial3Api::class)
 @Composable
-fun GForceApp(modifier: Modifier = Modifier) {
+fun GForceApp() {
     val context = LocalContext.current
     val textMeasurer = rememberTextMeasurer()
     
+    // 语言状态管理 (SharedPreferences 持久化)
+    var currentLanguage by remember { mutableStateOf(getSavedLanguage(context)) }
+    
+    // 翻译辅助函数
+    fun t(zh: String, en: String): String = if (currentLanguage == "zh") zh else en
+
     var displayGX by remember { mutableFloatStateOf(0f) }
     var displayGY by remember { mutableFloatStateOf(0f) }
-    
-    // 360 度原始极值数据
     val historyMaxG = remember { mutableStateListOf<Float>().apply { repeat(360) { add(0f) } } }
     
     val axisRight = remember { mutableStateOf(floatArrayOf(1f, 0f, 0f)) }
@@ -70,30 +73,22 @@ fun GForceApp(modifier: Modifier = Modifier) {
     val sensorEventListener = remember {
         object : SensorEventListener {
             private val smoothingFactor = 0.12f 
-
             override fun onSensorChanged(event: SensorEvent) {
                 when (event.sensor.type) {
-                    Sensor.TYPE_GRAVITY -> {
-                        System.arraycopy(event.values, 0, latestGravity, 0, 3)
-                    }
+                    Sensor.TYPE_GRAVITY -> System.arraycopy(event.values, 0, latestGravity, 0, 3)
                     Sensor.TYPE_LINEAR_ACCELERATION -> {
                         val lx = event.values[0]; val ly = event.values[1]; val lz = event.values[2]
                         val r = axisRight.value; val f = axisForward.value
-                        
                         val rawGX = (lx * r[0] + ly * r[1] + lz * r[2]) / 9.81f
                         val rawGY = (lx * f[0] + ly * f[1] + lz * f[2]) / 9.81f
-                        
                         displayGX = displayGX * (1 - smoothingFactor) + rawGX * smoothingFactor
                         displayGY = displayGY * (1 - smoothingFactor) + rawGY * smoothingFactor
-
                         val mag = sqrt(displayGX * displayGX + displayGY * displayGY)
                         if (mag > 0.05f) {
                             val angleRad = atan2(displayGY, displayGX)
                             var angleDeg = Math.toDegrees(angleRad.toDouble()).toInt()
                             angleDeg = (angleDeg + 360) % 360
-                            if (mag > historyMaxG[angleDeg]) {
-                                historyMaxG[angleDeg] = mag
-                            }
+                            if (mag > historyMaxG[angleDeg]) historyMaxG[angleDeg] = mag
                         }
                     }
                 }
@@ -109,157 +104,146 @@ fun GForceApp(modifier: Modifier = Modifier) {
         onDispose { sm.unregisterListener(sensorEventListener) }
     }
 
-    Column(
-        modifier = modifier.fillMaxSize().padding(16.dp),
-        horizontalAlignment = Alignment.CenterHorizontally,
-        verticalArrangement = Arrangement.Center
-    ) {
-        Text("车感 G-Meter", style = MaterialTheme.typography.titleLarge)
-        
-        Spacer(modifier = Modifier.height(20.dp))
-
-        Box(
-            modifier = Modifier
-                .size(320.dp)
-                .background(Color.Black, shape = CircleShape)
-                .border(2.dp, Color.DarkGray, shape = CircleShape),
-            contentAlignment = Alignment.Center
-        ) {
-            val maxDisplayG = 2.0f
-            Canvas(modifier = Modifier.fillMaxSize()) {
-                val center = Offset(size.width / 2, size.height / 2)
-                val radius = size.width / 2
-                
-                // 辅助网格 (限制在圆圈内)
-                drawLine(Color.DarkGray, Offset(center.x - radius, center.y), Offset(center.x + radius, center.y))
-                drawLine(Color.DarkGray, Offset(center.x, center.y - radius), Offset(center.x, center.y + radius))
-                for (g in listOf(0.5f, 1.0f, 1.5f, 2.0f)) {
-                    val r = radius * (g / maxDisplayG)
-                    drawCircle(Color.Gray.copy(alpha = 0.2f), radius = r, style = Stroke(1f))
-                    drawText(
-                        textMeasurer = textMeasurer,
-                        text = "${g}G",
-                        style = TextStyle(color = Color.White.copy(alpha = 0.5f), fontSize = 12.sp),
-                        topLeft = Offset(center.x + 6f, center.y - r + 4f)
-                    )
-                }
-
-                // 拟合算法绘制
-                val fitted = computeFittedHistory(historyMaxG)
-                val finalPath = Path()
-                var first = true
-                for (i in 0 until 360) {
-                    val gVal = fitted[i]
-                    if (gVal > 0.05f) {
-                        val ang = Math.toRadians(i.toDouble()).toFloat()
-                        val px = center.x + (gVal / maxDisplayG * radius) * cos(ang)
-                        val py = center.y + (gVal / maxDisplayG * radius) * sin(ang)
-                        if (first) { finalPath.moveTo(px, py); first = false }
-                        else { finalPath.lineTo(px, py) }
+    Scaffold(
+        modifier = Modifier.fillMaxSize(),
+        topBar = {
+            TopAppBar(
+                title = { Text(t("G力表", "G-Meter")) },
+                actions = {
+                    TextButton(onClick = {
+                        currentLanguage = if (currentLanguage == "zh") "en" else "zh"
+                        saveLanguage(context, currentLanguage)
+                    }) {
+                        Text(if (currentLanguage == "zh") "English" else "中文")
                     }
                 }
-                if (!first) { 
-                    finalPath.close()
-                    drawPath(finalPath, Color.Yellow.copy(alpha = 0.15f))
-                    drawPath(finalPath, Color.Yellow.copy(alpha = 0.6f), style = Stroke(6f))
-                }
-            }
-
-            val dotX = (displayGX / maxDisplayG * 160f).coerceIn(-160f, 160f)
-            val dotY = (displayGY / maxDisplayG * 160f).coerceIn(-160f, 160f)
-
-            Box(
-                modifier = Modifier
-                    .offset(x = dotX.dp, y = dotY.dp)
-                    .size(20.dp)
-                    .background(Color.Red, shape = CircleShape)
-                    .border(2.dp, Color.White, shape = CircleShape)
             )
         }
-
-        Spacer(modifier = Modifier.height(30.dp))
-
-        val displayMag = sqrt(displayGX * displayGX + displayGY * displayGY)
-        Text("${"%.2f".format(displayMag)} G", style = MaterialTheme.typography.displayMedium)
-        
-        Spacer(modifier = Modifier.height(30.dp))
-
-        // 操作按钮行
-        Row(
-            modifier = Modifier.fillMaxWidth(),
-            horizontalArrangement = Arrangement.spacedBy(8.dp, Alignment.CenterHorizontally)
+    ) { innerPadding ->
+        Column(
+            modifier = Modifier
+                .padding(innerPadding)
+                .fillMaxSize()
+                .padding(16.dp),
+            horizontalAlignment = Alignment.CenterHorizontally,
+            verticalArrangement = Arrangement.Center
         ) {
-            Button(onClick = {
-                val nx = latestGravity[0]; val ny = latestGravity[1]; val nz = latestGravity[2]
-                val nMag = sqrt(nx*nx + ny*ny + nz*nz)
-                val n = floatArrayOf(nx/nMag, ny/nMag, nz/nMag)
-                var tx = 0f; var ty = 1f; var tz = 0f
-                if (abs(n[1]) > 0.8f) { tx = 0f; ty = 0f; tz = -1f }
-                val dotTN = tx*n[0] + ty*n[1] + tz*n[2]
-                val fx = tx - dotTN * n[0]; val fy = ty - dotTN * n[1]; val fz = tz - dotTN * n[2]
-                val fMag = sqrt(fx*fx + fy*fy + fz*fz)
-                axisForward.value = floatArrayOf(fx/fMag, fy/fMag, fz/fMag)
-                val fv = axisForward.value
-                axisRight.value = floatArrayOf(fv[1] * n[2] - fv[2] * n[1], fv[2] * n[0] - fv[0] * n[2], fv[0] * n[1] - fv[1] * n[0])
-            }) {
-                Text("校准", fontSize = 12.sp)
+            Box(
+                modifier = Modifier
+                    .size(320.dp)
+                    .background(Color.Black, shape = CircleShape)
+                    .border(2.dp, Color.DarkGray, shape = CircleShape),
+                contentAlignment = Alignment.Center
+            ) {
+                val maxDisplayG = 2.0f
+                Canvas(modifier = Modifier.fillMaxSize()) {
+                    val center = Offset(size.width / 2, size.height / 2)
+                    val radius = size.width / 2
+                    
+                    // 辅助网格 (限制在圆圈内)
+                    drawLine(Color.DarkGray, Offset(center.x - radius, center.y), Offset(center.x + radius, center.y))
+                    drawLine(Color.DarkGray, Offset(center.x, center.y - radius), Offset(center.x, center.y + radius))
+                    
+                    for (g in listOf(0.5f, 1.0f, 1.5f, 2.0f)) {
+                        val r = radius * (g / maxDisplayG)
+                        drawCircle(Color.Gray.copy(alpha = 0.2f), radius = r, style = Stroke(1f))
+                        drawText(
+                            textMeasurer = textMeasurer,
+                            text = "${g}G",
+                            style = TextStyle(color = Color.White.copy(alpha = 0.5f), fontSize = 12.sp),
+                            topLeft = Offset(center.x + 6f, center.y - r + 4f)
+                        )
+                    }
+                    val fitted = computeFittedHistory(historyMaxG)
+                    val finalPath = Path()
+                    var first = true
+                    for (i in 0 until 360) {
+                        val gVal = fitted[i]
+                        if (gVal > 0.05f) {
+                            val ang = Math.toRadians(i.toDouble()).toFloat()
+                            val px = center.x + (gVal / maxDisplayG * radius) * cos(ang)
+                            val py = center.y + (gVal / maxDisplayG * radius) * sin(ang)
+                            if (first) { finalPath.moveTo(px, py); first = false }
+                            else { finalPath.lineTo(px, py) }
+                        }
+                    }
+                    if (!first) { 
+                        finalPath.close()
+                        drawPath(finalPath, Color.Yellow.copy(alpha = 0.15f))
+                        drawPath(finalPath, Color.Yellow.copy(alpha = 0.6f), style = Stroke(6f))
+                    }
+                }
+                val dotX = (displayGX / maxDisplayG * 160f).coerceIn(-160f, 160f)
+                val dotY = (displayGY / maxDisplayG * 160f).coerceIn(-160f, 160f)
+                Box(modifier = Modifier.offset(x = dotX.dp, y = dotY.dp).size(20.dp).background(Color.Red, shape = CircleShape).border(2.dp, Color.White, shape = CircleShape))
             }
+
+            Spacer(modifier = Modifier.height(30.dp))
+            val displayMag = sqrt(displayGX * displayGX + displayGY * displayGY)
+            Text("${"%.2f".format(displayMag)} G", style = MaterialTheme.typography.displayMedium)
             
-            Button(onClick = {
-                saveGDiagramToGallery(context, historyMaxG.toList())
-            }) {
-                Text("保存图片", fontSize = 12.sp)
+            Spacer(modifier = Modifier.height(30.dp))
+            Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp, Alignment.CenterHorizontally)) {
+                Button(onClick = {
+                    val nx = latestGravity[0]; val ny = latestGravity[1]; val nz = latestGravity[2]
+                    val nMag = sqrt(nx*nx + ny*ny + nz*nz)
+                    val n = floatArrayOf(nx/nMag, ny/nMag, nz/nMag)
+                    var tx = 0f; var ty = 1f; var tz = 0f
+                    if (abs(n[1]) > 0.8f) { tx = 0f; ty = 0f; tz = -1f }
+                    val dotTN = tx*n[0] + ty*n[1] + tz*n[2]
+                    val fx = tx - dotTN * n[0]; val fy = ty - dotTN * n[1]; val fz = tz - dotTN * n[2]
+                    val fMag = sqrt(fx*fx + fy*fy + fz*fz)
+                    axisForward.value = floatArrayOf(fx/fMag, fy/fMag, fz/fMag)
+                    val fv = axisForward.value
+                    axisRight.value = floatArrayOf(fv[1] * n[2] - fv[2] * n[1], fv[2] * n[0] - fv[0] * n[2], fv[0] * n[1] - fv[1] * n[0])
+                }) { Text(t("校准", "Calibrate"), fontSize = 12.sp) }
+                Button(onClick = { saveGDiagramToGallery(context, historyMaxG.toList(), currentLanguage) }) { Text(t("保存图片", "Save Image"), fontSize = 12.sp) }
+                OutlinedButton(onClick = { for(i in 0 until 360) historyMaxG[i] = 0f }) { Text(t("重置", "Reset"), fontSize = 12.sp) }
             }
-
-            OutlinedButton(onClick = { for(i in 0 until 360) historyMaxG[i] = 0f }) {
-                Text("重置", fontSize = 12.sp)
-            }
+            Spacer(modifier = Modifier.height(16.dp))
+            Text(
+                text = t("提示：手机可任意角度固定。请在水平地面且车辆静止时，点击“校准”以设定当前姿态为基准。", 
+                         "Tip: The phone can be fixed at any angle. Park on level ground and click 'Calibrate' while stationary to set the baseline."),
+                style = MaterialTheme.typography.bodySmall,
+                color = Color.Gray.copy(alpha = 0.8f)
+            )
         }
-
-        Spacer(modifier = Modifier.height(16.dp))
-        Text(
-            text = "提示：请在水平地面且车辆静止时将手机固定，点击“校准”以设定当前姿态为基准",
-            style = MaterialTheme.typography.bodySmall,
-            color = Color.Gray.copy(alpha = 0.8f)
-        )
     }
 }
 
-/**
- * 将拟合算法提取出来，方便 Composable 和图片生成共用
- */
+fun getSavedLanguage(context: Context): String {
+    val prefs = context.getSharedPreferences("gmeter_prefs", Context.MODE_PRIVATE)
+    return prefs.getString("language", "zh") ?: "zh"
+}
+
+fun saveLanguage(context: Context, lang: String) {
+    val prefs = context.getSharedPreferences("gmeter_prefs", Context.MODE_PRIVATE)
+    prefs.edit().putString("language", lang).apply()
+}
+
 fun computeFittedHistory(historyMaxG: List<Float>): FloatArray {
     val maxFiltered = FloatArray(360)
     val maxWin = 15
     for (i in 0 until 360) {
         var m = 0f
-        for (dw in -maxWin..maxWin) {
-            m = max(m, historyMaxG[(i + dw + 360) % 360])
-        }
+        for (dw in -maxWin..maxWin) { m = max(m, historyMaxG[(i + dw + 360) % 360]) }
         maxFiltered[i] = m
     }
     val fitted = FloatArray(360)
     val smoothWin = 10
     for (i in 0 until 360) {
         var sum = 0f
-        for (dw in -smoothWin..smoothWin) {
-            sum += maxFiltered[(i + dw + 360) % 360]
-        }
+        for (dw in -smoothWin..smoothWin) { sum += maxFiltered[(i + dw + 360) % 360] }
         fitted[i] = sum / (2 * smoothWin + 1)
     }
     return fitted
 }
 
-/**
- * 绘制并保存图片到系统相册
- */
-fun saveGDiagramToGallery(context: Context, history: List<Float>) {
+fun saveGDiagramToGallery(context: Context, history: List<Float>, lang: String) {
     val size = 1024
     val bitmap = Bitmap.createBitmap(size, size, Bitmap.Config.ARGB_8888)
     val canvas = android.graphics.Canvas(bitmap)
     val paint = Paint(Paint.ANTI_ALIAS_FLAG)
-    
-    // 背景
     canvas.drawColor(android.graphics.Color.BLACK)
     
     // 布局参数调整：确保标题、圆盘、底部数值互不干扰
@@ -318,13 +302,15 @@ fun saveGDiagramToGallery(context: Context, history: List<Float>) {
     paint.color = android.graphics.Color.WHITE
     paint.textSize = 50f
     paint.textAlign = Paint.Align.CENTER
-    canvas.drawText("G-Meter Performance Envelope", centerHorizontal, 90f, paint)
+    val title = if (lang == "zh") "G力表性能包络图" else "G-Meter Performance Envelope"
+    canvas.drawText(title, centerHorizontal, 90f, paint)
 
     // 绘制最大 G 力数值 (底部居中)
     val overallMaxG = history.maxOrNull() ?: 0f
     paint.color = android.graphics.Color.YELLOW
     paint.textSize = 65f
-    canvas.drawText("MAX PEAK: ${"%.2f".format(overallMaxG)} G", centerHorizontal, size - 70f, paint)
+    val maxText = if (lang == "zh") "最大峰值: ${"%.2f".format(overallMaxG)} G" else "MAX PEAK: ${"%.2f".format(overallMaxG)} G"
+    canvas.drawText(maxText, centerHorizontal, size - 70f, paint)
 
     // 保存到媒体库
     val filename = "GMeter_${System.currentTimeMillis()}.png"
@@ -343,9 +329,11 @@ fun saveGDiagramToGallery(context: Context, history: List<Float>) {
             outputStream?.use { stream ->
                 bitmap.compress(Bitmap.CompressFormat.PNG, 100, stream)
             }
-            Toast.makeText(context, "图片已保存至相册", Toast.LENGTH_SHORT).show()
+            val successMsg = if (lang == "zh") "图片已保存至相册" else "Image saved to gallery"
+            Toast.makeText(context, successMsg, Toast.LENGTH_SHORT).show()
         }
     } catch (e: Exception) {
-        Toast.makeText(context, "保存失败: ${e.message}", Toast.LENGTH_SHORT).show()
+        val failMsg = if (lang == "zh") "保存失败" else "Save failed"
+        Toast.makeText(context, "$failMsg: ${e.message}", Toast.LENGTH_SHORT).show()
     }
 }
