@@ -1,5 +1,6 @@
 package com.example.gmeter
 
+import android.app.Activity
 import android.content.ContentValues
 import android.content.Context
 import android.graphics.Bitmap
@@ -37,35 +38,78 @@ import androidx.compose.ui.unit.sp
 import androidx.compose.ui.viewinterop.AndroidView
 import com.example.gmeter.ui.theme.GMeterTheme
 import com.google.android.gms.ads.*
+import com.google.android.gms.ads.interstitial.InterstitialAd
+import com.google.android.gms.ads.interstitial.InterstitialAdLoadCallback
 import java.io.OutputStream
 import kotlin.math.*
 
+/**
+ * 广告配置中心
+ */
+object AdConfig {
+    // 全局开关：true 使用 Google 提供的测试 ID，false 使用你自己申请的真实 ID
+    const val IS_TEST_MODE = true
+
+    // 横幅广告单元 ID
+    private const val BANNER_TEST_ID = "ca-app-pub-3940256099942544/6300978111"
+    private const val BANNER_REAL_ID = "ca-app-pub-xxxxxxxxxxxxxxxx/xxxxxxxxxx" // 在此替换你的真实 ID
+    val bannerId: String get() = if (IS_TEST_MODE) BANNER_TEST_ID else BANNER_REAL_ID
+
+    // 插屏广告单元 ID
+    private const val INTERSTITIAL_TEST_ID = "ca-app-pub-3940256099942544/1033173712"
+    private const val INTERSTITIAL_REAL_ID = "ca-app-pub-xxxxxxxxxxxxxxxx/xxxxxxxxxx" // 在此替换你的真实 ID
+    val interstitialId: String get() = if (IS_TEST_MODE) INTERSTITIAL_TEST_ID else INTERSTITIAL_REAL_ID
+}
+
 class MainActivity : ComponentActivity() {
+    private var mInterstitialAd: InterstitialAd? = null
+
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         
-        // 1. 初始化 Google Mobile Ads SDK
         MobileAds.initialize(this) {}
+        loadInterstitialAd()
         
         enableEdgeToEdge()
         setContent {
             GMeterTheme {
-                GForceApp()
+                GForceApp(
+                    onShowAd = { showInterstitialAd() }
+                )
             }
+        }
+    }
+
+    private fun loadInterstitialAd() {
+        val adRequest = AdRequest.Builder().build()
+        // 使用配置中心提供的插屏广告 ID
+        InterstitialAd.load(this, AdConfig.interstitialId, adRequest,
+            object : InterstitialAdLoadCallback() {
+                override fun onAdLoaded(interstitialAd: InterstitialAd) {
+                    mInterstitialAd = interstitialAd
+                }
+                override fun onAdFailedToLoad(adError: LoadAdError) {
+                    mInterstitialAd = null
+                }
+            })
+    }
+
+    private fun showInterstitialAd() {
+        if (mInterstitialAd != null) {
+            mInterstitialAd?.show(this)
+            // 展示后重新加载
+            loadInterstitialAd()
         }
     }
 }
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-fun GForceApp() {
+fun GForceApp(onShowAd: () -> Unit) {
     val context = LocalContext.current
     val textMeasurer = rememberTextMeasurer()
     
-    // 语言状态管理 (SharedPreferences 持久化)
     var currentLanguage by remember { mutableStateOf(getSavedLanguage(context)) }
-    
-    // 翻译辅助函数
     fun t(zh: String, en: String): String = if (currentLanguage == "zh") zh else en
 
     var displayGX by remember { mutableFloatStateOf(0f) }
@@ -126,11 +170,10 @@ fun GForceApp() {
             )
         },
         bottomBar = {
-            // 2. 在底部栏放置广告，确保它不会挡住任何控制按钮
             Box(
                 modifier = Modifier
                     .fillMaxWidth()
-                    .windowInsetsPadding(WindowInsets.navigationBars) // 避开系统导航栏
+                    .windowInsetsPadding(WindowInsets.navigationBars)
                     .background(MaterialTheme.colorScheme.surface),
                 contentAlignment = Alignment.Center
             ) {
@@ -144,7 +187,7 @@ fun GForceApp() {
                 .fillMaxSize()
                 .padding(horizontal = 16.dp, vertical = 8.dp),
             horizontalAlignment = Alignment.CenterHorizontally,
-            verticalArrangement = Arrangement.SpaceEvenly // 使用平均分配让布局在有广告时也好看
+            verticalArrangement = Arrangement.SpaceEvenly
         ) {
             Box(
                 modifier = Modifier
@@ -210,7 +253,13 @@ fun GForceApp() {
                     val fv = axisForward.value
                     axisRight.value = floatArrayOf(fv[1] * n[2] - fv[2] * n[1], fv[2] * n[0] - fv[0] * n[2], fv[0] * n[1] - fv[1] * n[0])
                 }) { Text(t("校准", "Calibrate"), fontSize = 12.sp) }
-                Button(onClick = { saveGDiagramToGallery(context, historyMaxG.toList(), currentLanguage) }) { Text(t("保存图片", "Save Image"), fontSize = 12.sp) }
+                
+                Button(onClick = { 
+                    saveGDiagramToGallery(context, historyMaxG.toList(), currentLanguage)
+                    // 保存图片后展示插屏广告
+                    onShowAd()
+                }) { Text(t("保存图片", "Save Image"), fontSize = 12.sp) }
+                
                 OutlinedButton(onClick = { for(i in 0 until 360) historyMaxG[i] = 0f }) { Text(t("重置", "Reset"), fontSize = 12.sp) }
             }
 
@@ -225,9 +274,6 @@ fun GForceApp() {
     }
 }
 
-/**
- * 3. 广告视图组件
- */
 @Composable
 fun BannerAdView() {
     AndroidView(
@@ -235,8 +281,8 @@ fun BannerAdView() {
         factory = { context ->
             AdView(context).apply {
                 setAdSize(AdSize.BANNER)
-                // 这里使用的是 Google 提供的测试广告 ID
-                adUnitId = "ca-app-pub-3940256099942544/6300978111" 
+                // 使用配置中心提供的横幅广告 ID
+                adUnitId = AdConfig.bannerId
                 loadAd(AdRequest.Builder().build())
             }
         }
@@ -278,13 +324,11 @@ fun saveGDiagramToGallery(context: Context, history: List<Float>, lang: String) 
     val paint = Paint(Paint.ANTI_ALIAS_FLAG)
     canvas.drawColor(android.graphics.Color.BLACK)
     
-    // 布局参数调整：确保标题、圆盘、底部数值互不干扰
     val centerHorizontal = size / 2f
-    val centerVertical = size / 2f // 回归中心
-    val radius = size * 0.36f // 略微缩小半径到 368 左右
+    val centerVertical = size / 2f
+    val radius = size * 0.36f
     val maxG = 2.0f
 
-    // 辅助网格 (限制在圆盘边缘)
     paint.color = android.graphics.Color.DKGRAY
     paint.strokeWidth = 2f
     val axisLimit = radius
@@ -303,7 +347,6 @@ fun saveGDiagramToGallery(context: Context, history: List<Float>, lang: String) 
         paint.color = android.graphics.Color.DKGRAY
     }
 
-    // 拟合包络线
     val fitted = computeFittedHistory(history)
     val path = android.graphics.Path()
     var first = true
@@ -329,7 +372,6 @@ fun saveGDiagramToGallery(context: Context, history: List<Float>, lang: String) 
         canvas.drawPath(path, paint)
     }
 
-    // 绘制标题
     paint.style = Paint.Style.FILL
     paint.color = android.graphics.Color.WHITE
     paint.textSize = 50f
@@ -337,14 +379,12 @@ fun saveGDiagramToGallery(context: Context, history: List<Float>, lang: String) 
     val title = if (lang == "zh") "G力表性能包络图" else "G-Meter Performance Envelope"
     canvas.drawText(title, centerHorizontal, 90f, paint)
 
-    // 绘制最大 G 力数值 (底部居中)
     val overallMaxG = history.maxOrNull() ?: 0f
     paint.color = android.graphics.Color.YELLOW
     paint.textSize = 65f
     val maxText = if (lang == "zh") "最大峰值: ${"%.2f".format(overallMaxG)} G" else "MAX PEAK: ${"%.2f".format(overallMaxG)} G"
     canvas.drawText(maxText, centerHorizontal, size - 70f, paint)
 
-    // 保存到媒体库
     val filename = "GMeter_${System.currentTimeMillis()}.png"
     val contentValues = ContentValues().apply {
         put(MediaStore.MediaColumns.DISPLAY_NAME, filename)
