@@ -34,13 +34,19 @@ import androidx.compose.ui.text.drawText
 import androidx.compose.ui.text.rememberTextMeasurer
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import androidx.compose.ui.viewinterop.AndroidView
 import com.example.gmeter.ui.theme.GMeterTheme
+import com.google.android.gms.ads.*
 import java.io.OutputStream
 import kotlin.math.*
 
 class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+        
+        // 1. 初始化 Google Mobile Ads SDK
+        MobileAds.initialize(this) {}
+        
         enableEdgeToEdge()
         setContent {
             GMeterTheme {
@@ -118,15 +124,27 @@ fun GForceApp() {
                     }
                 }
             )
+        },
+        bottomBar = {
+            // 2. 在底部栏放置广告，确保它不会挡住任何控制按钮
+            Box(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .windowInsetsPadding(WindowInsets.navigationBars) // 避开系统导航栏
+                    .background(MaterialTheme.colorScheme.surface),
+                contentAlignment = Alignment.Center
+            ) {
+                BannerAdView()
+            }
         }
     ) { innerPadding ->
         Column(
             modifier = Modifier
                 .padding(innerPadding)
                 .fillMaxSize()
-                .padding(16.dp),
+                .padding(horizontal = 16.dp, vertical = 8.dp),
             horizontalAlignment = Alignment.CenterHorizontally,
-            verticalArrangement = Arrangement.Center
+            verticalArrangement = Arrangement.SpaceEvenly // 使用平均分配让布局在有广告时也好看
         ) {
             Box(
                 modifier = Modifier
@@ -139,11 +157,8 @@ fun GForceApp() {
                 Canvas(modifier = Modifier.fillMaxSize()) {
                     val center = Offset(size.width / 2, size.height / 2)
                     val radius = size.width / 2
-                    
-                    // 辅助网格 (限制在圆圈内)
                     drawLine(Color.DarkGray, Offset(center.x - radius, center.y), Offset(center.x + radius, center.y))
                     drawLine(Color.DarkGray, Offset(center.x, center.y - radius), Offset(center.x, center.y + radius))
-                    
                     for (g in listOf(0.5f, 1.0f, 1.5f, 2.0f)) {
                         val r = radius * (g / maxDisplayG)
                         drawCircle(Color.Gray.copy(alpha = 0.2f), radius = r, style = Stroke(1f))
@@ -178,11 +193,9 @@ fun GForceApp() {
                 Box(modifier = Modifier.offset(x = dotX.dp, y = dotY.dp).size(20.dp).background(Color.Red, shape = CircleShape).border(2.dp, Color.White, shape = CircleShape))
             }
 
-            Spacer(modifier = Modifier.height(30.dp))
             val displayMag = sqrt(displayGX * displayGX + displayGY * displayGY)
             Text("${"%.2f".format(displayMag)} G", style = MaterialTheme.typography.displayMedium)
             
-            Spacer(modifier = Modifier.height(30.dp))
             Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp, Alignment.CenterHorizontally)) {
                 Button(onClick = {
                     val nx = latestGravity[0]; val ny = latestGravity[1]; val nz = latestGravity[2]
@@ -200,15 +213,34 @@ fun GForceApp() {
                 Button(onClick = { saveGDiagramToGallery(context, historyMaxG.toList(), currentLanguage) }) { Text(t("保存图片", "Save Image"), fontSize = 12.sp) }
                 OutlinedButton(onClick = { for(i in 0 until 360) historyMaxG[i] = 0f }) { Text(t("重置", "Reset"), fontSize = 12.sp) }
             }
-            Spacer(modifier = Modifier.height(16.dp))
+
             Text(
                 text = t("提示：手机可任意角度固定。请在水平地面且车辆静止时，点击“校准”以设定当前姿态为基准。", 
                          "Tip: The phone can be fixed at any angle. Park on level ground and click 'Calibrate' while stationary to set the baseline."),
                 style = MaterialTheme.typography.bodySmall,
-                color = Color.Gray.copy(alpha = 0.8f)
+                color = Color.Gray.copy(alpha = 0.8f),
+                modifier = Modifier.padding(bottom = 8.dp)
             )
         }
     }
+}
+
+/**
+ * 3. 广告视图组件
+ */
+@Composable
+fun BannerAdView() {
+    AndroidView(
+        modifier = Modifier.fillMaxWidth().height(50.dp),
+        factory = { context ->
+            AdView(context).apply {
+                setAdSize(AdSize.BANNER)
+                // 这里使用的是 Google 提供的测试广告 ID
+                adUnitId = "ca-app-pub-3940256099942544/6300978111" 
+                loadAd(AdRequest.Builder().build())
+            }
+        }
+    )
 }
 
 fun getSavedLanguage(context: Context): String {
