@@ -1,11 +1,17 @@
 package com.example.gmeter
 
+import android.content.ContentValues
 import android.content.Context
+import android.graphics.Bitmap
+import android.graphics.Paint
 import android.hardware.Sensor
 import android.hardware.SensorEvent
 import android.hardware.SensorEventListener
 import android.hardware.SensorManager
+import android.os.Build
 import android.os.Bundle
+import android.provider.MediaStore
+import android.widget.Toast
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
@@ -20,11 +26,17 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.Path
 import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.text.TextStyle
+import androidx.compose.ui.text.drawText
+import androidx.compose.ui.text.rememberTextMeasurer
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
 import com.example.gmeter.ui.theme.GMeterTheme
-import kotlin.math.sqrt
+import java.io.OutputStream
+import kotlin.math.*
 
 class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -43,176 +55,297 @@ class MainActivity : ComponentActivity() {
 @Composable
 fun GForceApp(modifier: Modifier = Modifier) {
     val context = LocalContext.current
-    var gX by remember { mutableFloatStateOf(0f) }
-    var gY by remember { mutableFloatStateOf(0f) }
+    val textMeasurer = rememberTextMeasurer()
     
-    // 存储校准时的重力向量（基准向量）
-    val gravityBaseline = remember { mutableStateOf(floatArrayOf(0f, 0f, 9.81f)) }
+    var displayGX by remember { mutableFloatStateOf(0f) }
+    var displayGY by remember { mutableFloatStateOf(0f) }
     
-    // 存储最新的传感器原始值，用于点击校准按钮时捕获
-    val latestRaw = remember { floatArrayOf(0f, 0f, 9.81f) }
+    // 360 度原始极值数据
+    val historyMaxG = remember { mutableStateListOf<Float>().apply { repeat(360) { add(0f) } } }
+    
+    val axisRight = remember { mutableStateOf(floatArrayOf(1f, 0f, 0f)) }
+    val axisForward = remember { mutableStateOf(floatArrayOf(0f, 1f, 0f)) }
+    val latestGravity = remember { floatArrayOf(0f, 0f, 9.81f) }
 
     val sensorEventListener = remember {
         object : SensorEventListener {
+            private val smoothingFactor = 0.12f 
+
             override fun onSensorChanged(event: SensorEvent) {
-                if (event.sensor.type == Sensor.TYPE_ACCELEROMETER) {
-                    val rx = event.values[0]
-                    val ry = event.values[1]
-                    val rz = event.values[2]
-                    
-                    latestRaw[0] = rx
-                    latestRaw[1] = ry
-                    latestRaw[2] = rz
-
-                    val baseline = gravityBaseline.value
-                    val bx = baseline[0]
-                    val by = baseline[1]
-                    val bz = baseline[2]
-                    
-                    val bMag = sqrt(bx * bx + by * by + bz * bz)
-                    if (bMag < 0.1f) return
-
-                    // 1. 单位法向量 n (代表“下”方向)
-                    val nx = bx / bMag
-                    val ny = by / bMag
-                    val nz = bz / bMag
-
-                    // 2. 计算线性加速度向量 = 原始向量 - (原始向量在 n 方向的投影) * n
-                    // 这样可以消除重力分量，得到水平面内的加速度
-                    val dot = rx * nx + ry * ny + rz * nz
-                    val lx = rx - dot * nx
-                    val ly = ry - dot * ny
-                    val lz = rz - dot * nz
-
-                    // 3. 定义 UI 的“向前”方向 (v)：手机 Y 轴在水平面上的投影
-                    var vx = 0f - ny * nx
-                    var vy = 1f - ny * ny
-                    var vz = 0f - ny * nz
-                    var vMag = sqrt(vx * vx + vy * vy + vz * vz)
-                    
-                    if (vMag < 0.01f) {
-                        // 如果手机水平放置（Y 轴与重力平行），改用手机 Z 轴作为“向前”方向
-                        vx = 0f - nz * nx
-                        vy = 0f - nz * ny
-                        vz = 1f - nz * nz
-                        vMag = sqrt(vx * vx + vy * vy + vz * vz)
+                when (event.sensor.type) {
+                    Sensor.TYPE_GRAVITY -> {
+                        System.arraycopy(event.values, 0, latestGravity, 0, 3)
                     }
+                    Sensor.TYPE_LINEAR_ACCELERATION -> {
+                        val lx = event.values[0]; val ly = event.values[1]; val lz = event.values[2]
+                        val r = axisRight.value; val f = axisForward.value
+                        
+                        val rawGX = (lx * r[0] + ly * r[1] + lz * r[2]) / 9.81f
+                        val rawGY = (lx * f[0] + ly * f[1] + lz * f[2]) / 9.81f
+                        
+                        displayGX = displayGX * (1 - smoothingFactor) + rawGX * smoothingFactor
+                        displayGY = displayGY * (1 - smoothingFactor) + rawGY * smoothingFactor
 
-                    if (vMag > 0.01f) {
-                        vx /= vMag
-                        vy /= vMag
-                        vz /= vMag
+                        val mag = sqrt(displayGX * displayGX + displayGY * displayGY)
+                        if (mag > 0.05f) {
+                            val angleRad = atan2(displayGY, displayGX)
+                            var angleDeg = Math.toDegrees(angleRad.toDouble()).toInt()
+                            angleDeg = (angleDeg + 360) % 360
+                            if (mag > historyMaxG[angleDeg]) {
+                                historyMaxG[angleDeg] = mag
+                            }
+                        }
                     }
-
-                    // 4. 定义 UI 的“向右”方向 (u)：v 与 n 的叉积
-                    val ux = vy * nz - vz * ny
-                    val uy = vz * nx - vx * nz
-                    val uz = vx * ny - vy * nx
-
-                    // 5. 将线性加速度投射到 u 和 v 轴上，并除以 9.81 转换为 G 值
-                    gX = (lx * ux + ly * uy + lz * uz) / 9.81f
-                    gY = (lx * vx + ly * vy + lz * vz) / 9.81f
                 }
             }
-
             override fun onAccuracyChanged(sensor: Sensor?, accuracy: Int) {}
         }
     }
 
-    // 生命周期管理：注册和注销传感器
     DisposableEffect(Unit) {
-        val sensorManager = context.getSystemService(Context.SENSOR_SERVICE) as SensorManager
-        val accel = sensorManager.getDefaultSensor(Sensor.TYPE_ACCELEROMETER)
-        sensorManager.registerListener(sensorEventListener, accel, SensorManager.SENSOR_DELAY_UI)
-        onDispose {
-            sensorManager.unregisterListener(sensorEventListener)
-        }
+        val sm = context.getSystemService(Context.SENSOR_SERVICE) as SensorManager
+        sm.registerListener(sensorEventListener, sm.getDefaultSensor(Sensor.TYPE_LINEAR_ACCELERATION), SensorManager.SENSOR_DELAY_GAME)
+        sm.registerListener(sensorEventListener, sm.getDefaultSensor(Sensor.TYPE_GRAVITY), SensorManager.SENSOR_DELAY_GAME)
+        onDispose { sm.unregisterListener(sensorEventListener) }
     }
 
     Column(
-        modifier = modifier.fillMaxSize(),
+        modifier = modifier.fillMaxSize().padding(16.dp),
         horizontalAlignment = Alignment.CenterHorizontally,
         verticalArrangement = Arrangement.Center
     ) {
-        Text(
-            text = "G-Meter",
-            style = MaterialTheme.typography.headlineMedium,
-            color = MaterialTheme.colorScheme.primary
-        )
+        Text("车感 G-Meter", style = MaterialTheme.typography.titleLarge)
         
-        Spacer(modifier = Modifier.height(32.dp))
+        Spacer(modifier = Modifier.height(20.dp))
 
-        // 圆形显示区域
         Box(
             modifier = Modifier
-                .size(300.dp)
-                .background(MaterialTheme.colorScheme.surfaceVariant, shape = CircleShape)
-                .border(2.dp, MaterialTheme.colorScheme.outline, shape = CircleShape),
+                .size(320.dp)
+                .background(Color.Black, shape = CircleShape)
+                .border(2.dp, Color.DarkGray, shape = CircleShape),
             contentAlignment = Alignment.Center
         ) {
+            val maxDisplayG = 2.0f
             Canvas(modifier = Modifier.fillMaxSize()) {
                 val center = Offset(size.width / 2, size.height / 2)
                 val radius = size.width / 2
                 
-                // 十字准星
-                drawLine(Color.Gray.copy(alpha = 0.5f), Offset(0f, center.y), Offset(size.width, center.y))
-                drawLine(Color.Gray.copy(alpha = 0.5f), Offset(center.x, 0f), Offset(center.x, size.height))
-                
-                // 刻度圆圈 (0.5G, 1.0G, 1.5G)
-                drawCircle(Color.Gray.copy(alpha = 0.3f), radius = radius * 0.25f, style = Stroke(1f))
-                drawCircle(Color.Gray.copy(alpha = 0.3f), radius = radius * 0.5f, style = Stroke(1f))
-                drawCircle(Color.Gray.copy(alpha = 0.3f), radius = radius * 0.75f, style = Stroke(1f))
+                // 辅助网格 (限制在圆圈内)
+                drawLine(Color.DarkGray, Offset(center.x - radius, center.y), Offset(center.x + radius, center.y))
+                drawLine(Color.DarkGray, Offset(center.x, center.y - radius), Offset(center.x, center.y + radius))
+                for (g in listOf(0.5f, 1.0f, 1.5f, 2.0f)) {
+                    val r = radius * (g / maxDisplayG)
+                    drawCircle(Color.Gray.copy(alpha = 0.2f), radius = r, style = Stroke(1f))
+                    drawText(
+                        textMeasurer = textMeasurer,
+                        text = "${g}G",
+                        style = TextStyle(color = Color.White.copy(alpha = 0.5f), fontSize = 12.sp),
+                        topLeft = Offset(center.x + 6f, center.y - r + 4f)
+                    )
+                }
+
+                // 拟合算法绘制
+                val fitted = computeFittedHistory(historyMaxG)
+                val finalPath = Path()
+                var first = true
+                for (i in 0 until 360) {
+                    val gVal = fitted[i]
+                    if (gVal > 0.05f) {
+                        val ang = Math.toRadians(i.toDouble()).toFloat()
+                        val px = center.x + (gVal / maxDisplayG * radius) * cos(ang)
+                        val py = center.y + (gVal / maxDisplayG * radius) * sin(ang)
+                        if (first) { finalPath.moveTo(px, py); first = false }
+                        else { finalPath.lineTo(px, py) }
+                    }
+                }
+                if (!first) { 
+                    finalPath.close()
+                    drawPath(finalPath, Color.Yellow.copy(alpha = 0.15f))
+                    drawPath(finalPath, Color.Yellow.copy(alpha = 0.6f), style = Stroke(6f))
+                }
             }
 
-            // G力小红点
-            // 比例映射：2.0G 对应圆圈边缘 (150dp)
-            val maxDisplayG = 2.0f
-            val dotX = (gX / maxDisplayG * 150f).coerceIn(-150f, 150f)
-            val dotY = (-gY / maxDisplayG * 150f).coerceIn(-150f, 150f)
+            val dotX = (displayGX / maxDisplayG * 160f).coerceIn(-160f, 160f)
+            val dotY = (displayGY / maxDisplayG * 160f).coerceIn(-160f, 160f)
 
             Box(
                 modifier = Modifier
                     .offset(x = dotX.dp, y = dotY.dp)
-                    .size(24.dp)
+                    .size(20.dp)
                     .background(Color.Red, shape = CircleShape)
                     .border(2.dp, Color.White, shape = CircleShape)
             )
         }
 
-        Spacer(modifier = Modifier.height(40.dp))
+        Spacer(modifier = Modifier.height(30.dp))
 
-        // 数值显示
-        val totalG = sqrt(gX * gX + gY * gY)
-        Text(
-            text = "${"%.2f".format(totalG)} G",
-            style = MaterialTheme.typography.displaySmall,
-            color = MaterialTheme.colorScheme.onSurface
-        )
-        Row(
-            modifier = Modifier.padding(top = 8.dp),
-            horizontalArrangement = Arrangement.spacedBy(16.dp)
-        ) {
-            Text(text = "横向: ${"%.2f".format(gX)} G", style = MaterialTheme.typography.bodyLarge)
-            Text(text = "纵向: ${"%.2f".format(gY)} G", style = MaterialTheme.typography.bodyLarge)
-        }
-
-        Spacer(modifier = Modifier.height(48.dp))
-
-        // 校准按钮
-        Button(
-            onClick = {
-                gravityBaseline.value = latestRaw.copyOf()
-            },
-            shape = MaterialTheme.shapes.medium
-        ) {
-            Text("点击校准 (Calibrate)")
-        }
+        val displayMag = sqrt(displayGX * displayGX + displayGY * displayGY)
+        Text("${"%.2f".format(displayMag)} G", style = MaterialTheme.typography.displayMedium)
         
+        Spacer(modifier = Modifier.height(30.dp))
+
+        // 操作按钮行
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.spacedBy(8.dp, Alignment.CenterHorizontally)
+        ) {
+            Button(onClick = {
+                val nx = latestGravity[0]; val ny = latestGravity[1]; val nz = latestGravity[2]
+                val nMag = sqrt(nx*nx + ny*ny + nz*nz)
+                val n = floatArrayOf(nx/nMag, ny/nMag, nz/nMag)
+                var tx = 0f; var ty = 1f; var tz = 0f
+                if (abs(n[1]) > 0.8f) { tx = 0f; ty = 0f; tz = -1f }
+                val dotTN = tx*n[0] + ty*n[1] + tz*n[2]
+                val fx = tx - dotTN * n[0]; val fy = ty - dotTN * n[1]; val fz = tz - dotTN * n[2]
+                val fMag = sqrt(fx*fx + fy*fy + fz*fz)
+                axisForward.value = floatArrayOf(fx/fMag, fy/fMag, fz/fMag)
+                val fv = axisForward.value
+                axisRight.value = floatArrayOf(fv[1] * n[2] - fv[2] * n[1], fv[2] * n[0] - fv[0] * n[2], fv[0] * n[1] - fv[1] * n[0])
+            }) {
+                Text("校准", fontSize = 12.sp)
+            }
+            
+            Button(onClick = {
+                saveGDiagramToGallery(context, historyMaxG.toList())
+            }) {
+                Text("保存图片", fontSize = 12.sp)
+            }
+
+            OutlinedButton(onClick = { for(i in 0 until 360) historyMaxG[i] = 0f }) {
+                Text("重置", fontSize = 12.sp)
+            }
+        }
+
+        Spacer(modifier = Modifier.height(16.dp))
         Text(
-            text = "请在车辆静止于水平面时点击，以设定零位",
+            text = "提示：请在水平地面且车辆静止时将手机固定，点击“校准”以设定当前姿态为基准",
             style = MaterialTheme.typography.bodySmall,
-            modifier = Modifier.padding(top = 8.dp),
-            color = MaterialTheme.colorScheme.onSurfaceVariant
+            color = Color.Gray.copy(alpha = 0.8f)
         )
+    }
+}
+
+/**
+ * 将拟合算法提取出来，方便 Composable 和图片生成共用
+ */
+fun computeFittedHistory(historyMaxG: List<Float>): FloatArray {
+    val maxFiltered = FloatArray(360)
+    val maxWin = 15
+    for (i in 0 until 360) {
+        var m = 0f
+        for (dw in -maxWin..maxWin) {
+            m = max(m, historyMaxG[(i + dw + 360) % 360])
+        }
+        maxFiltered[i] = m
+    }
+    val fitted = FloatArray(360)
+    val smoothWin = 10
+    for (i in 0 until 360) {
+        var sum = 0f
+        for (dw in -smoothWin..smoothWin) {
+            sum += maxFiltered[(i + dw + 360) % 360]
+        }
+        fitted[i] = sum / (2 * smoothWin + 1)
+    }
+    return fitted
+}
+
+/**
+ * 绘制并保存图片到系统相册
+ */
+fun saveGDiagramToGallery(context: Context, history: List<Float>) {
+    val size = 1024
+    val bitmap = Bitmap.createBitmap(size, size, Bitmap.Config.ARGB_8888)
+    val canvas = android.graphics.Canvas(bitmap)
+    val paint = Paint(Paint.ANTI_ALIAS_FLAG)
+    
+    // 背景
+    canvas.drawColor(android.graphics.Color.BLACK)
+    
+    // 布局参数调整：确保标题、圆盘、底部数值互不干扰
+    val centerHorizontal = size / 2f
+    val centerVertical = size / 2f // 回归中心
+    val radius = size * 0.36f // 略微缩小半径到 368 左右
+    val maxG = 2.0f
+
+    // 辅助网格 (限制在圆盘边缘)
+    paint.color = android.graphics.Color.DKGRAY
+    paint.strokeWidth = 2f
+    val axisLimit = radius
+    canvas.drawLine(centerHorizontal - axisLimit, centerVertical, centerHorizontal + axisLimit, centerVertical, paint)
+    canvas.drawLine(centerHorizontal, centerVertical - axisLimit, centerHorizontal, centerVertical + axisLimit, paint)
+
+    paint.style = Paint.Style.STROKE
+    paint.textSize = 30f
+    for (g in listOf(0.5f, 1.0f, 1.5f, 2.0f)) {
+        val r = radius * (g / maxG)
+        canvas.drawCircle(centerHorizontal, centerVertical, r, paint)
+        paint.style = Paint.Style.FILL
+        paint.color = android.graphics.Color.LTGRAY
+        canvas.drawText("${g}G", centerHorizontal + 10f, centerVertical - r + 35f, paint)
+        paint.style = Paint.Style.STROKE
+        paint.color = android.graphics.Color.DKGRAY
+    }
+
+    // 拟合包络线
+    val fitted = computeFittedHistory(history)
+    val path = android.graphics.Path()
+    var first = true
+    for (i in 0 until 360) {
+        val gVal = fitted[i]
+        if (gVal > 0.05f) {
+            val ang = Math.toRadians(i.toDouble())
+            val px = centerHorizontal + (gVal / maxG * radius) * cos(ang).toFloat()
+            val py = centerVertical + (gVal / maxG * radius) * sin(ang).toFloat()
+            if (first) { path.moveTo(px, py); first = false }
+            else { path.lineTo(px, py) }
+        }
+    }
+    if (!first) {
+        path.close()
+        paint.style = Paint.Style.FILL
+        paint.color = android.graphics.Color.argb(45, 255, 255, 0)
+        canvas.drawPath(path, paint)
+        
+        paint.style = Paint.Style.STROKE
+        paint.color = android.graphics.Color.YELLOW
+        paint.strokeWidth = 8f
+        canvas.drawPath(path, paint)
+    }
+
+    // 绘制标题
+    paint.style = Paint.Style.FILL
+    paint.color = android.graphics.Color.WHITE
+    paint.textSize = 50f
+    paint.textAlign = Paint.Align.CENTER
+    canvas.drawText("G-Meter Performance Envelope", centerHorizontal, 90f, paint)
+
+    // 绘制最大 G 力数值 (底部居中)
+    val overallMaxG = history.maxOrNull() ?: 0f
+    paint.color = android.graphics.Color.YELLOW
+    paint.textSize = 65f
+    canvas.drawText("MAX PEAK: ${"%.2f".format(overallMaxG)} G", centerHorizontal, size - 70f, paint)
+
+    // 保存到媒体库
+    val filename = "GMeter_${System.currentTimeMillis()}.png"
+    val contentValues = ContentValues().apply {
+        put(MediaStore.MediaColumns.DISPLAY_NAME, filename)
+        put(MediaStore.MediaColumns.MIME_TYPE, "image/png")
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+            put(MediaStore.MediaColumns.RELATIVE_PATH, "Pictures/G-Meter")
+        }
+    }
+
+    val uri = context.contentResolver.insert(MediaStore.Images.Media.EXTERNAL_CONTENT_URI, contentValues)
+    try {
+        uri?.let {
+            val outputStream: OutputStream? = context.contentResolver.openOutputStream(it)
+            outputStream?.use { stream ->
+                bitmap.compress(Bitmap.CompressFormat.PNG, 100, stream)
+            }
+            Toast.makeText(context, "图片已保存至相册", Toast.LENGTH_SHORT).show()
+        }
+    } catch (e: Exception) {
+        Toast.makeText(context, "保存失败: ${e.message}", Toast.LENGTH_SHORT).show()
     }
 }
