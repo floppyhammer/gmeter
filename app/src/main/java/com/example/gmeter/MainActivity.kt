@@ -239,28 +239,36 @@ fun GForceApp(onShowAd: () -> Unit) {
             val displayMag = sqrt(displayGX * displayGX + displayGY * displayGY)
             Text("${"%.2f".format(displayMag)} G", style = MaterialTheme.typography.displayMedium)
             
-            Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp, Alignment.CenterHorizontally)) {
-                Button(onClick = {
-                    val nx = latestGravity[0]; val ny = latestGravity[1]; val nz = latestGravity[2]
-                    val nMag = sqrt(nx*nx + ny*ny + nz*nz)
-                    val n = floatArrayOf(nx/nMag, ny/nMag, nz/nMag)
-                    var tx = 0f; var ty = 1f; var tz = 0f
-                    if (abs(n[1]) > 0.8f) { tx = 0f; ty = 0f; tz = -1f }
-                    val dotTN = tx*n[0] + ty*n[1] + tz*n[2]
-                    val fx = tx - dotTN * n[0]; val fy = ty - dotTN * n[1]; val fz = tz - dotTN * n[2]
-                    val fMag = sqrt(fx*fx + fy*fy + fz*fz)
-                    axisForward.value = floatArrayOf(fx/fMag, fy/fMag, fz/fMag)
-                    val fv = axisForward.value
-                    axisRight.value = floatArrayOf(fv[1] * n[2] - fv[2] * n[1], fv[2] * n[0] - fv[0] * n[2], fv[0] * n[1] - fv[1] * n[0])
-                }) { Text(t("校准", "Calibrate"), fontSize = 12.sp) }
+            // 第一行：校准和重置 (功能按钮)
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.spacedBy(16.dp, Alignment.CenterHorizontally)
+            ) {
+                Button(
+                    onClick = {
+                        val nx = latestGravity[0]; val ny = latestGravity[1]; val nz = latestGravity[2]
+                        val nMag = sqrt(nx*nx + ny*ny + nz*nz)
+                        val n = floatArrayOf(nx/nMag, ny/nMag, nz/nMag)
+                        var tx = 0f; var ty = 1f; var tz = 0f
+                        if (abs(n[1]) > 0.8f) { tx = 0f; ty = 0f; tz = -1f }
+                        val dotTN = tx*n[0] + ty*n[1] + tz*n[2]
+                        val fx = tx - dotTN * n[0]; val fy = ty - dotTN * n[1]; val fz = tz - dotTN * n[2]
+                        val fMag = sqrt(fx*fx + fy*fy + fz*fz)
+                        axisForward.value = floatArrayOf(fx/fMag, fy/fMag, fz/fMag)
+                        val fv = axisForward.value
+                        axisRight.value = floatArrayOf(fv[1] * n[2] - fv[2] * n[1], fv[2] * n[0] - fv[0] * n[2], fv[0] * n[1] - fv[1] * n[0])
+                    },
+                    modifier = Modifier.weight(1f)
+                ) {
+                    Text(t("校准", "Calibrate"), fontSize = 12.sp)
+                }
                 
-                Button(onClick = { 
-                    saveGDiagramToGallery(context, historyMaxG.toList(), currentLanguage)
-                    // 保存图片后展示插屏广告
-                    onShowAd()
-                }) { Text(t("保存图片", "Save Image"), fontSize = 12.sp) }
-                
-                OutlinedButton(onClick = { for(i in 0 until 360) historyMaxG[i] = 0f }) { Text(t("重置", "Reset"), fontSize = 12.sp) }
+                OutlinedButton(
+                    onClick = { for(i in 0 until 360) historyMaxG[i] = 0f },
+                    modifier = Modifier.weight(1f)
+                ) {
+                    Text(t("重置", "Reset"), fontSize = 12.sp)
+                }
             }
 
             Text(
@@ -268,8 +276,22 @@ fun GForceApp(onShowAd: () -> Unit) {
                          "Tip: The phone can be fixed at any angle. Park on level ground and click 'Calibrate' while stationary to set the baseline."),
                 style = MaterialTheme.typography.bodySmall,
                 color = Color.Gray.copy(alpha = 0.8f),
-                modifier = Modifier.padding(bottom = 8.dp)
+                modifier = Modifier.padding(vertical = 4.dp)
             )
+
+            Spacer(modifier = Modifier.height(8.dp))
+
+            // 第二行：保存图片 (结果按钮，更醒目)
+            Button(
+                onClick = { 
+                    saveGDiagramToGallery(context, historyMaxG.toList(), currentLanguage)
+                    onShowAd()
+                },
+                modifier = Modifier.fillMaxWidth(),
+                colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.primary)
+            ) {
+                Text(t("保存图片", "Save Image"), fontSize = 14.sp)
+            }
         }
     }
 }
@@ -291,7 +313,7 @@ fun BannerAdView() {
 
 fun getSavedLanguage(context: Context): String {
     val prefs = context.getSharedPreferences("gmeter_prefs", Context.MODE_PRIVATE)
-    return prefs.getString("language", "zh") ?: "zh"
+    return prefs.getString("language", "en") ?: "en"
 }
 
 fun saveLanguage(context: Context, lang: String) {
