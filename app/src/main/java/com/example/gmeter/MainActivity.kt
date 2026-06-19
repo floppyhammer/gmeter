@@ -195,6 +195,8 @@ fun GForceApp() {
                         axisForward.value = floatArrayOf(fx/fMag, fy/fMag, fz/fMag)
                         val fv = axisForward.value
                         axisRight.value = floatArrayOf(fv[1] * n[2] - fv[2] * n[1], fv[2] * n[0] - fv[0] * n[2], fv[0] * n[1] - fv[1] * n[0])
+                        
+                        Toast.makeText(context, t("校准成功", "Calibrated"), Toast.LENGTH_SHORT).show()
                     },
                     modifier = Modifier.weight(1f)
                 ) {
@@ -202,7 +204,10 @@ fun GForceApp() {
                 }
                 
                 OutlinedButton(
-                    onClick = { for(i in 0 until 360) historyMaxG[i] = 0f },
+                    onClick = { 
+                        for(i in 0 until 360) historyMaxG[i] = 0f 
+                        Toast.makeText(context, t("已重置", "Reset Done"), Toast.LENGTH_SHORT).show()
+                    },
                     modifier = Modifier.weight(1f)
                 ) {
                     Text(t("重置", "Reset"), fontSize = 12.sp)
