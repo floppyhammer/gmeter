@@ -134,13 +134,13 @@ fun GForceApp() {
                     .border(2.dp, Color.DarkGray, shape = CircleShape),
                 contentAlignment = Alignment.Center
             ) {
-                val maxDisplayG = 2.0f
+                val maxDisplayG = 1.2f
                 Canvas(modifier = Modifier.fillMaxSize()) {
                     val center = Offset(size.width / 2, size.height / 2)
                     val radius = size.width / 2
                     drawLine(Color.DarkGray, Offset(center.x - radius, center.y), Offset(center.x + radius, center.y))
                     drawLine(Color.DarkGray, Offset(center.x, center.y - radius), Offset(center.x, center.y + radius))
-                    for (g in listOf(0.5f, 1.0f, 1.5f, 2.0f)) {
+                    for (g in listOf(0.3f, 0.6f, 0.9f, 1.2f)) {
                         val r = radius * (g / maxDisplayG)
                         drawCircle(Color.Gray.copy(alpha = 0.2f), radius = r, style = Stroke(1f))
                         drawText(
@@ -276,7 +276,7 @@ fun saveGDiagramToGallery(context: Context, history: List<Float>, lang: String) 
     val centerHorizontal = size / 2f
     val centerVertical = size / 2f
     val radius = size * 0.36f
-    val maxG = 2.0f
+    val maxG = 1.2f
 
     paint.color = android.graphics.Color.DKGRAY
     paint.strokeWidth = 2f
@@ -286,7 +286,7 @@ fun saveGDiagramToGallery(context: Context, history: List<Float>, lang: String) 
 
     paint.style = Paint.Style.STROKE
     paint.textSize = 30f
-    for (g in listOf(0.5f, 1.0f, 1.5f, 2.0f)) {
+    for (g in listOf(0.3f, 0.6f, 0.9f, 1.2f)) {
         val r = radius * (g / maxG)
         canvas.drawCircle(centerHorizontal, centerVertical, r, paint)
         paint.style = Paint.Style.FILL
