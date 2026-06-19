@@ -1,6 +1,5 @@
 package com.example.gmeter
 
-import android.app.Activity
 import android.content.ContentValues
 import android.content.Context
 import android.graphics.Bitmap
@@ -35,77 +34,27 @@ import androidx.compose.ui.text.drawText
 import androidx.compose.ui.text.rememberTextMeasurer
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
-import androidx.compose.ui.viewinterop.AndroidView
 import com.example.gmeter.ui.theme.GMeterTheme
-import com.google.android.gms.ads.*
-import com.google.android.gms.ads.interstitial.InterstitialAd
-import com.google.android.gms.ads.interstitial.InterstitialAdLoadCallback
 import java.io.OutputStream
 import kotlin.math.*
 
-/**
- * 广告配置中心
- */
-object AdConfig {
-    // 全局开关：true 使用 Google 提供的测试 ID，false 使用你自己申请的真实 ID
-    const val IS_TEST_MODE = true
-
-    // 横幅广告单元 ID
-    private const val BANNER_TEST_ID = "ca-app-pub-3940256099942544/6300978111"
-    private const val BANNER_REAL_ID = "ca-app-pub-xxxxxxxxxxxxxxxx/xxxxxxxxxx" // 在此替换你的真实 ID
-    val bannerId: String get() = if (IS_TEST_MODE) BANNER_TEST_ID else BANNER_REAL_ID
-
-    // 插屏广告单元 ID
-    private const val INTERSTITIAL_TEST_ID = "ca-app-pub-3940256099942544/1033173712"
-    private const val INTERSTITIAL_REAL_ID = "ca-app-pub-xxxxxxxxxxxxxxxx/xxxxxxxxxx" // 在此替换你的真实 ID
-    val interstitialId: String get() = if (IS_TEST_MODE) INTERSTITIAL_TEST_ID else INTERSTITIAL_REAL_ID
-}
-
 class MainActivity : ComponentActivity() {
-    private var mInterstitialAd: InterstitialAd? = null
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         
-        MobileAds.initialize(this) {}
-        loadInterstitialAd()
-        
         enableEdgeToEdge()
         setContent {
             GMeterTheme {
-                GForceApp(
-                    onShowAd = { showInterstitialAd() }
-                )
+                GForceApp()
             }
-        }
-    }
-
-    private fun loadInterstitialAd() {
-        val adRequest = AdRequest.Builder().build()
-        // 使用配置中心提供的插屏广告 ID
-        InterstitialAd.load(this, AdConfig.interstitialId, adRequest,
-            object : InterstitialAdLoadCallback() {
-                override fun onAdLoaded(interstitialAd: InterstitialAd) {
-                    mInterstitialAd = interstitialAd
-                }
-                override fun onAdFailedToLoad(adError: LoadAdError) {
-                    mInterstitialAd = null
-                }
-            })
-    }
-
-    private fun showInterstitialAd() {
-        if (mInterstitialAd != null) {
-            mInterstitialAd?.show(this)
-            // 展示后重新加载
-            loadInterstitialAd()
         }
     }
 }
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-fun GForceApp(onShowAd: () -> Unit) {
+fun GForceApp() {
     val context = LocalContext.current
     val textMeasurer = rememberTextMeasurer()
     
@@ -168,17 +117,6 @@ fun GForceApp(onShowAd: () -> Unit) {
                     }
                 }
             )
-        },
-        bottomBar = {
-            Box(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .windowInsetsPadding(WindowInsets.navigationBars)
-                    .background(MaterialTheme.colorScheme.surface),
-                contentAlignment = Alignment.Center
-            ) {
-                BannerAdView()
-            }
         }
     ) { innerPadding ->
         Column(
@@ -285,7 +223,6 @@ fun GForceApp(onShowAd: () -> Unit) {
             Button(
                 onClick = { 
                     saveGDiagramToGallery(context, historyMaxG.toList(), currentLanguage)
-                    onShowAd()
                 },
                 modifier = Modifier.fillMaxWidth(),
                 colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.primary)
@@ -294,21 +231,6 @@ fun GForceApp(onShowAd: () -> Unit) {
             }
         }
     }
-}
-
-@Composable
-fun BannerAdView() {
-    AndroidView(
-        modifier = Modifier.fillMaxWidth().height(50.dp),
-        factory = { context ->
-            AdView(context).apply {
-                setAdSize(AdSize.BANNER)
-                // 使用配置中心提供的横幅广告 ID
-                adUnitId = AdConfig.bannerId
-                loadAd(AdRequest.Builder().build())
-            }
-        }
-    )
 }
 
 fun getSavedLanguage(context: Context): String {
